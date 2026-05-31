@@ -7,22 +7,17 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
     <style>
-        /* Inter 폰트 적용 및 기본 스타일 */
         body {
             font-family: 'Inter', sans-serif;
             background-color: #f7f7f7;
             min-height: 100vh;
         }
         .timer-display {
-            font-size: clamp(3rem, 15vw, 10rem); /* 화면 크기에 따라 반응형으로 글자 크기 조정 */
+            font-size: clamp(3rem, 15vw, 10rem);
             font-weight: 700;
             line-height: 1;
             transition: color 0.3s ease;
         }
-        .control-panel {
-            grid-template-columns: repeat(3, 1fr);
-        }
-        /* 로딩 스피너 애니메이션 */
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
@@ -44,10 +39,19 @@
             사용자 ID: 로컬 모드 작동 중
         </p>
 
-        <div id="time-display" class="timer-display text-blue-600 my-8">
+        <!-- 💡 [추가] 자주 쓰는 시간 간편 설정 버튼 영역 -->
+        <div class="flex justify-center space-x-2 mb-4">
+            <button onclick="shortcutTime(3)" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-1.5 px-4 rounded-full text-sm transition shadow-sm">⏱️ 3분</button>
+            <button onclick="shortcutTime(5)" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-1.5 px-4 rounded-full text-sm transition shadow-sm">⏱️ 5분</button>
+            <button onclick="shortcutTime(10)" class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium py-1.5 px-4 rounded-full text-sm transition shadow-sm">⏱️ 10분</button>
+        </div>
+
+        <!-- 시간 표시 영역 -->
+        <div id="time-display" class="timer-display text-blue-600 my-6">
             05:00
         </div>
 
+        <!-- 설정 입력 영역 -->
         <div id="settings-area" class="flex justify-center items-center space-x-2 mb-8 p-4 bg-blue-50 rounded-lg">
             <input type="number" id="minutes-input" value="5" min="0" max="99" class="w-16 p-2 text-lg text-center border-2 border-blue-300 rounded-lg focus:outline-none focus:border-blue-500" aria-label="Minutes">
             <span class="text-xl font-bold text-gray-700">분</span>
@@ -58,6 +62,7 @@
             </button>
         </div>
 
+        <!-- 타이머 제어 버튼 영역 -->
         <div id="controls" class="grid grid-cols-3 gap-3 md:gap-5">
             <button id="start-button" class="col-span-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition duration-150 transform hover:scale-105 disabled:bg-gray-400">
                 시작
@@ -70,6 +75,7 @@
             </button>
         </div>
 
+        <!-- 로딩 인디케이터/에러 메시지 -->
         <div id="status-message" class="mt-6 h-6 text-sm">
             <div id="loading-indicator" class="flex items-center justify-center space-x-2 text-blue-600" style="display: none;">
                 <div class="spinner w-4 h-4 rounded-full border-2 border-transparent"></div>
@@ -79,19 +85,14 @@
         </div>
     </div>
 
+    <!-- Firebase SDK Modules -->
     <script type="module">
-        // Firebase Core Imports
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, getDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // =======================================================================
-        // 1. 전역 상수 및 변수 설정
-        // =======================================================================
-
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'class-timer-default';
         
-        // 파이어베이스 설정 값 안전하게 파싱 (실패 시 null 처리)
         let firebaseConfig = null;
         try {
             if (typeof __firebase_config !== 'undefined' && __firebase_config) {
@@ -102,9 +103,8 @@
         }
         
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-        
         const TIMER_DOC_PATH = `artifacts/${appId}/public/data/classTimer/timerState`;
-        const DEFAULT_DURATION_SECONDS = 300; // 기본 5분
+        const DEFAULT_DURATION_SECONDS = 300;
 
         // UI 요소
         const timeDisplay = document.getElementById('time-display');
@@ -120,22 +120,51 @@
 
         // 로컬 상태 변수
         let db = null, auth = null;
-        let isAuthReady = false;
         let userId = null;
         let tickInterval = null;
         
-        // Firestore 및 로컬 공용 타이머 상태
         let currentTimerState = {
-            status: 'STOPPED', // RUNNING, PAUSED, STOPPED, FINISHED
+            status: 'STOPPED',
             totalDurationSeconds: DEFAULT_DURATION_SECONDS,
             startTimeMs: 0,
             pausedTimeRemainingSeconds: DEFAULT_DURATION_SECONDS,
         };
 
-        // =======================================================================
-        // 2. 유틸리티 함수
-        // =======================================================================
-        
+        // 💡 [추가] 브라우저 자체 내장 오디오 시스템을 활용한 비프음 알림 함수
+        function playBeepSound() {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // 조금 더 상큼하고 부드러운 '딩동' 효과음을 위한 2단계 음성 생성
+                const playTone = (freq, startTime, duration) => {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.connect(gain);
+                    gain.connect(audioCtx.destination);
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(freq, startTime);
+                    gain.gain.setValueAtTime(0.3, startTime);
+                    gain.gain.exponentialRampToValueAtTime(0.00001, startTime + duration);
+                    osc.start(startTime);
+                    osc.stop(startTime + duration);
+                };
+
+                // 첫 번째 높은 음, 이어서 더 높은 음 (경쾌한 딩동)
+                playTone(523.25, audioCtx.currentTime, 0.15); // 도 (C5)
+                playTone(659.25, audioCtx.currentTime + 0.15, 0.3); // 미 (E5)
+            } catch (e) {
+                console.error("오디오 재생 실패:", e);
+            }
+        }
+
+        // 💡 [추가] 전역 스코프에 숏컷 함수 등록
+        window.shortcutTime = function(minutes) {
+            if (currentTimerState.status !== 'STOPPED' && currentTimerState.status !== 'FINISHED') return;
+            minutesInput.value = minutes;
+            secondsInput.value = 0;
+            handleSetTime();
+        }
+
         function formatTime(totalSeconds) {
             const safeSeconds = Math.max(0, Math.floor(totalSeconds));
             const min = Math.floor(safeSeconds / 60);
@@ -150,9 +179,17 @@
             pauseButton.disabled = (status !== 'RUNNING');
             resetButton.disabled = (status === 'STOPPED' || status === 'FINISHED');
 
-            setButton.disabled = (status !== 'STOPPED' && status !== 'FINISHED');
-            minutesInput.disabled = setButton.disabled;
-            secondsInput.disabled = setButton.disabled;
+            const isEditable = (status === 'STOPPED' || status === 'FINISHED');
+            setButton.disabled = !isEditable;
+            minutesInput.disabled = !isEditable;
+            secondsInput.disabled = !isEditable;
+            
+            // 숏컷 버튼들도 상태에 따라 활성화/비활성화
+            document.querySelectorAll('button[onclick^="shortcutTime"]').forEach(btn => {
+                btn.disabled = !isEditable;
+                if(!isEditable) btn.classList.add('opacity-50', 'cursor-not-allowed');
+                else btn.classList.remove('opacity-50', 'cursor-not-allowed');
+            });
 
             if (status === 'PAUSED') {
                 startButton.textContent = '계속';
@@ -163,15 +200,19 @@
             }
         }
 
+        // 💡 [수정] 마감 임박 효과 적용 (30초 이하 시 주황/빨강 깜빡임 효과)
         function updateDisplay(remainingSeconds) {
             const timeStr = formatTime(remainingSeconds);
             timeDisplay.textContent = timeStr;
             
+            timeDisplay.classList.remove('text-blue-600', 'text-amber-500', 'text-red-600', 'animate-pulse');
+            
             if (remainingSeconds <= 0) {
-                timeDisplay.classList.remove('text-blue-600');
                 timeDisplay.classList.add('text-red-600', 'animate-pulse');
+            } else if (remainingSeconds <= 30) {
+                // 30초 이하일 때 긴박함을 주는 오렌지 컬러 + 깜빡임 효과
+                timeDisplay.classList.add('text-amber-500', 'animate-pulse');
             } else {
-                timeDisplay.classList.remove('text-red-600', 'animate-pulse');
                 timeDisplay.classList.add('text-blue-600');
             }
         }
@@ -190,7 +231,6 @@
 
             if (remainingSeconds <= 0 && state.status === 'RUNNING') {
                 remainingSeconds = 0;
-                // 타이머 종료 상태 반영
                 handleTimerFinished();
             }
 
@@ -198,6 +238,9 @@
         }
 
         function handleTimerFinished() {
+            // 💡 [추가] 타이머가 종료되는 순간 알림음 재생
+            playBeepSound();
+
             if (db && userId) {
                 setTimerState({
                     status: 'FINISHED',
@@ -223,15 +266,9 @@
             }
         }
 
-        // =======================================================================
-        // 3. 데이터 제어 함수 (온라인/오프라인 하이브리드 지원)
-        // =======================================================================
-
         async function setTimerState(updates) {
-            // 로컬 상태는 항상 즉시 업데이트하여 반응성 확보
             currentTimerState = { ...currentTimerState, ...updates };
 
-            // 파이어베이스가 정상 연결된 상태일 때만 서버에 업로드
             if (db && userId) {
                 try {
                     await setDoc(doc(db, TIMER_DOC_PATH), currentTimerState, { merge: true });
@@ -239,7 +276,6 @@
                     console.error("Firestore 업데이트 오류:", e);
                 }
             } else {
-                // 로컬 모드일 때 자체 인터벌 및 UI 관리
                 updateButtonStates();
                 if (currentTimerState.status === 'RUNNING' && !tickInterval) {
                     tickInterval = setInterval(tick, 1000);
@@ -286,10 +322,6 @@
             });
         }
         
-        // =======================================================================
-        // 4. 이벤트 핸들러
-        // =======================================================================
-
         async function handleStart() {
             if (currentTimerState.status === 'RUNNING') return;
             
@@ -356,14 +388,8 @@
             updateButtonStates();
         }
 
-        // =======================================================================
-        // 5. Firebase 초기화 안전 제어
-        // =======================================================================
-        
         async function setupFirebase() {
-            // 주입된 설정 정보에 핵심 값이 없으면 바로 로컬 모드로 작동시킴
             if (!firebaseConfig || !firebaseConfig.projectId) {
-                console.log("Firebase 키가 제공되지 않았습니다. 일반 로컬 타이머 모드로 전환합니다.");
                 userIdDisplay.textContent = "모드: 로컬 타이머 (단독 실행)";
                 updateButtonStates();
                 tick();
@@ -375,7 +401,7 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
                 
-                setLogLevel('Error'); // 디버그 에러 로그 최소화
+                setLogLevel('Error');
                 await setPersistence(auth, browserLocalPersistence);
 
                 if (initialAuthToken) {
@@ -388,7 +414,6 @@
                     if (user) {
                         userId = user.uid;
                         userIdDisplay.textContent = `사용자 ID (공유용): ${userId}`;
-                        isAuthReady = true;
                         syncTimerState();
                     } else {
                         userIdDisplay.textContent = '모드: 로컬 타이머';
@@ -398,18 +423,11 @@
                 });
                 
             } catch (error) {
-                console.warn("Firebase 연결 실패, 로컬 타이머로 전환 완료.");
                 userIdDisplay.textContent = "모드: 로컬 타이머";
-                db = null;
-                auth = null;
                 updateButtonStates();
                 tick();
             }
         }
-
-        // =======================================================================
-        // 6. 이벤트 리스너 및 초기 실행
-        // =======================================================================
         
         startButton.addEventListener('click', handleStart);
         pauseButton.addEventListener('click', handlePause);
