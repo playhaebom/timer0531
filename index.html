@@ -34,24 +34,20 @@
 </head>
 <body class="flex flex-col items-center justify-center p-4">
 
-    <!-- 타이머 애플리케이션 컨테이너 -->
     <div id="app-container" class="bg-white p-6 md:p-10 rounded-xl shadow-2xl w-full max-w-lg text-center transform transition duration-500 hover:scale-[1.02]">
 
         <h1 class="text-3xl font-bold text-gray-800 mb-6 border-b pb-3">
             🕒 수업 시간 타이머
         </h1>
 
-        <!-- 현재 사용자 ID 표시 (공유를 위해 필수) -->
         <p id="user-id-display" class="text-sm text-gray-500 mb-4 truncate">
-            사용자 ID: 로딩 중...
+            사용자 ID: 로컬 모드 작동 중
         </p>
 
-        <!-- 시간 표시 영역 -->
         <div id="time-display" class="timer-display text-blue-600 my-8">
             05:00
         </div>
 
-        <!-- 설정 입력 영역 -->
         <div id="settings-area" class="flex justify-center items-center space-x-2 mb-8 p-4 bg-blue-50 rounded-lg">
             <input type="number" id="minutes-input" value="5" min="0" max="99" class="w-16 p-2 text-lg text-center border-2 border-blue-300 rounded-lg focus:outline-none focus:border-blue-500" aria-label="Minutes">
             <span class="text-xl font-bold text-gray-700">분</span>
@@ -62,7 +58,6 @@
             </button>
         </div>
 
-        <!-- 타이머 제어 버튼 영역 -->
         <div id="controls" class="grid grid-cols-3 gap-3 md:gap-5">
             <button id="start-button" class="col-span-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition duration-150 transform hover:scale-105 disabled:bg-gray-400">
                 시작
@@ -75,7 +70,6 @@
             </button>
         </div>
 
-        <!-- 로딩 인디케이터/에러 메시지 -->
         <div id="status-message" class="mt-6 h-6 text-sm">
             <div id="loading-indicator" class="flex items-center justify-center space-x-2 text-blue-600" style="display: none;">
                 <div class="spinner w-4 h-4 rounded-full border-2 border-transparent"></div>
@@ -85,7 +79,6 @@
         </div>
     </div>
 
-    <!-- Firebase SDK Modules -->
     <script type="module">
         // Firebase Core Imports
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -96,12 +89,20 @@
         // 1. 전역 상수 및 변수 설정
         // =======================================================================
 
-        // 캔버스 환경 변수 사용 (필수)
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'class-timer-default';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        
+        // 파이어베이스 설정 값 안전하게 파싱 (실패 시 null 처리)
+        let firebaseConfig = null;
+        try {
+            if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+                firebaseConfig = JSON.parse(__firebase_config);
+            }
+        } catch (e) {
+            console.warn("Firebase 설정 파싱 실패, 로컬 모드로 전환합니다.");
+        }
+        
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         
-        // Firestore 경로 설정 (모든 사용자가 볼 수 있도록 공개 경로 사용)
         const TIMER_DOC_PATH = `artifacts/${appId}/public/data/classTimer/timerState`;
         const DEFAULT_DURATION_SECONDS = 300; // 기본 5분
 
@@ -118,12 +119,12 @@
         const userIdDisplay = document.getElementById('user-id-display');
 
         // 로컬 상태 변수
-        let db, auth;
+        let db = null, auth = null;
         let isAuthReady = false;
         let userId = null;
         let tickInterval = null;
         
-        // Firestore에서 동기화되는 타이머 상태
+        // Firestore 및 로컬 공용 타이머 상태
         let currentTimerState = {
             status: 'STOPPED', // RUNNING, PAUSED, STOPPED, FINISHED
             totalDurationSeconds: DEFAULT_DURATION_SECONDS,
@@ -135,11 +136,6 @@
         // 2. 유틸리티 함수
         // =======================================================================
         
-        /**
-         * 초(seconds)를 'MM:SS' 형식의 문자열로 변환합니다.
-         * @param {number} totalSeconds - 남은 시간 (초)
-         * @returns {string} - 포맷된 시간 문자열
-         */
         function formatTime(totalSeconds) {
             const safeSeconds = Math.max(0, Math.floor(totalSeconds));
             const min = Math.floor(safeSeconds / 60);
@@ -147,9 +143,6 @@
             return `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
         }
 
-        /**
-         * 버튼 상태를 업데이트합니다.
-         */
         function updateButtonStates() {
             const status = currentTimerState.status;
             
@@ -157,12 +150,10 @@
             pauseButton.disabled = (status !== 'RUNNING');
             resetButton.disabled = (status === 'STOPPED' || status === 'FINISHED');
 
-            // 타이머가 작동 중이거나 일시정지 상태일 때는 설정 버튼 비활성화
             setButton.disabled = (status !== 'STOPPED' && status !== 'FINISHED');
             minutesInput.disabled = setButton.disabled;
             secondsInput.disabled = setButton.disabled;
 
-            // 시작 버튼 텍스트 변경
             if (status === 'PAUSED') {
                 startButton.textContent = '계속';
             } else if (status === 'FINISHED') {
@@ -172,15 +163,10 @@
             }
         }
 
-        /**
-         * UI에 남은 시간을 표시하고, 종료 시 색상을 변경합니다.
-         * @param {number} remainingSeconds - 남은 시간 (초)
-         */
         function updateDisplay(remainingSeconds) {
             const timeStr = formatTime(remainingSeconds);
             timeDisplay.textContent = timeStr;
             
-            // 시간 종료 시 (00:00) 스타일 변경
             if (remainingSeconds <= 0) {
                 timeDisplay.classList.remove('text-blue-600');
                 timeDisplay.classList.add('text-red-600', 'animate-pulse');
@@ -190,45 +176,45 @@
             }
         }
 
-        /**
-         * 현재 타이머 상태를 기반으로 남은 시간을 계산합니다.
-         * @returns {number} - 남은 시간 (초)
-         */
         function calculateRemainingTime() {
             const state = currentTimerState;
             const now = Date.now();
             let remainingSeconds = 0;
 
             if (state.status === 'RUNNING') {
-                // RUNNING: totalDuration - (현재 시간 - 시작 시간)
                 const elapsedMs = now - state.startTimeMs;
                 remainingSeconds = state.totalDurationSeconds - (elapsedMs / 1000);
-            } else if (state.status === 'PAUSED' || state.status === 'STOPPED' || state.status === 'FINISHED') {
-                // PAUSED/STOPPED/FINISHED: 저장된 남은 시간 사용
+            } else {
                 remainingSeconds = state.pausedTimeRemainingSeconds;
             }
 
-            // 0초 미만 방지 및 상태 업데이트
             if (remainingSeconds <= 0 && state.status === 'RUNNING') {
                 remainingSeconds = 0;
-                // 타이머 종료 처리 (Firestore 업데이트)
-                setTimerState({
-                    status: 'FINISHED',
-                    pausedTimeRemainingSeconds: 0
-                });
+                // 타이머 종료 상태 반영
+                handleTimerFinished();
             }
 
             return remainingSeconds;
         }
 
-        /**
-         * 1초마다 실행되며, 남은 시간을 계산하고 UI를 업데이트합니다.
-         */
+        function handleTimerFinished() {
+            if (db && userId) {
+                setTimerState({
+                    status: 'FINISHED',
+                    pausedTimeRemainingSeconds: 0
+                });
+            } else {
+                currentTimerState.status = 'FINISHED';
+                currentTimerState.pausedTimeRemainingSeconds = 0;
+                updateButtonStates();
+                tick();
+            }
+        }
+
         function tick() {
             const remainingSeconds = calculateRemainingTime();
             updateDisplay(remainingSeconds);
 
-            // 타이머가 FINISHED 상태이거나 0초에 도달하면 인터벌을 멈춥니다.
             if (remainingSeconds <= 0 || currentTimerState.status === 'FINISHED' || currentTimerState.status === 'STOPPED') {
                 if (tickInterval) {
                     clearInterval(tickInterval);
@@ -238,80 +224,64 @@
         }
 
         // =======================================================================
-        // 3. Firestore 동기화 및 제어 함수
+        // 3. 데이터 제어 함수 (온라인/오프라인 하이브리드 지원)
         // =======================================================================
 
-        /**
-         * Firestore에 타이머 상태를 저장합니다.
-         * 기존 상태를 덮어쓰지 않고 변경된 필드만 업데이트합니다.
-         * @param {object} updates - Firestore에 업데이트할 필드 객체
-         */
         async function setTimerState(updates) {
-            if (!db || !userId) {
-                console.error("Firestore가 초기화되지 않았거나 사용자 ID를 알 수 없습니다.");
-                return;
-            }
+            // 로컬 상태는 항상 즉시 업데이트하여 반응성 확보
+            currentTimerState = { ...currentTimerState, ...updates };
 
-            // 새로운 상태 객체 생성 (기존 상태 + 업데이트)
-            const newState = { ...currentTimerState, ...updates };
-
-            try {
-                await setDoc(doc(db, TIMER_DOC_PATH), newState, { merge: true });
-                // console.log("Firestore 상태 업데이트 성공:", updates);
-            } catch (e) {
-                console.error("Firestore 업데이트 오류:", e);
-                errorMessage.textContent = `데이터 저장 오류: ${e.message}`;
-                errorMessage.style.display = 'block';
+            // 파이어베이스가 정상 연결된 상태일 때만 서버에 업로드
+            if (db && userId) {
+                try {
+                    await setDoc(doc(db, TIMER_DOC_PATH), currentTimerState, { merge: true });
+                } catch (e) {
+                    console.error("Firestore 업데이트 오류:", e);
+                }
+            } else {
+                // 로컬 모드일 때 자체 인터벌 및 UI 관리
+                updateButtonStates();
+                if (currentTimerState.status === 'RUNNING' && !tickInterval) {
+                    tickInterval = setInterval(tick, 1000);
+                } else if (currentTimerState.status !== 'RUNNING') {
+                    if (tickInterval) {
+                        clearInterval(tickInterval);
+                        tickInterval = null;
+                    }
+                    tick();
+                }
             }
         }
 
-        /**
-         * Firestore에서 실시간으로 타이머 상태를 동기화합니다.
-         */
         function syncTimerState() {
             if (!db) return;
 
             const timerDocRef = doc(db, TIMER_DOC_PATH);
-
-            // 로딩 표시
             loadingIndicator.style.display = 'flex';
-            errorMessage.style.display = 'none';
 
             onSnapshot(timerDocRef, (docSnapshot) => {
                 loadingIndicator.style.display = 'none';
 
                 if (docSnapshot.exists()) {
                     const data = docSnapshot.data();
-                    // 최신 상태로 로컬 상태 업데이트
                     currentTimerState = { ...currentTimerState, ...data };
                 } else {
-                    // 문서가 없으면 기본 상태로 새로 생성
-                    console.log("Firestore 문서가 없어 기본 상태로 생성합니다.");
                     setTimerState(currentTimerState);
                 }
 
-                // 상태가 변경될 때마다 UI 업데이트를 시작/재개합니다.
                 updateButtonStates();
                 
-                // tick 인터벌 관리: RUNNING 상태일 때만 인터벌 시작
                 if (currentTimerState.status === 'RUNNING' && !tickInterval) {
-                    // console.log("타이머가 RUNNING 상태로 전환됨. 인터벌 시작.");
                     tickInterval = setInterval(tick, 1000);
-                } else if (currentTimerState.status !== 'RUNNING' && tickInterval) {
-                    // RUNNING이 아니면 인터벌 중지
-                    // console.log("타이머 상태 변경 (RUNNING 아님). 인터벌 중지.");
-                    clearInterval(tickInterval);
-                    tickInterval = null;
-                    // UI를 한 번 더 업데이트하여 정확한 정지 시간을 표시
+                } else if (currentTimerState.status !== 'RUNNING') {
+                    if (tickInterval) {
+                        clearInterval(tickInterval);
+                        tickInterval = null;
+                    }
                     tick();
-                } else if (currentTimerState.status !== 'RUNNING' && !tickInterval) {
-                    // FINISHED, PAUSED, STOPPED 상태에서는 정지된 시간 표시
-                    tick(); 
                 }
             }, (error) => {
-                console.error("Firestore 동기화 오류:", error);
-                errorMessage.textContent = `실시간 동기화 오류: ${error.message}`;
-                errorMessage.style.display = 'block';
+                console.warn("Firestore 동기화 실패 (로컬 모드로 계속 작동):", error);
                 loadingIndicator.style.display = 'none';
             });
         }
@@ -320,9 +290,6 @@
         // 4. 이벤트 핸들러
         // =======================================================================
 
-        /**
-         * 타이머 시작 또는 재개 처리
-         */
         async function handleStart() {
             if (currentTimerState.status === 'RUNNING') return;
             
@@ -330,20 +297,15 @@
             let updates = {};
 
             if (currentTimerState.status === 'PAUSED') {
-                // 일시정지 해제: 남은 시간에서 다시 카운트 시작
                 updates = {
                     status: 'RUNNING',
-                    // 새로운 시작 시간: (현재 시간) - (총 시간 - 일시정지 시 남은 시간)
                     startTimeMs: now - (currentTimerState.totalDurationSeconds - currentTimerState.pausedTimeRemainingSeconds) * 1000,
-                    // pausedTimeRemainingSeconds는 RUNNING 상태에서는 무시되지만 0으로 설정
                     pausedTimeRemainingSeconds: 0 
                 };
             } else if (currentTimerState.status === 'STOPPED' || currentTimerState.status === 'FINISHED') {
-                // 새로 시작: totalDurationSeconds를 기반으로 시작
                 updates = {
                     status: 'RUNNING',
                     startTimeMs: now,
-                    // totalDurationSeconds는 이미 설정되어 있어야 함
                     pausedTimeRemainingSeconds: 0 
                 };
             }
@@ -351,12 +313,8 @@
             await setTimerState(updates);
         }
 
-        /**
-         * 타이머 일시정지 처리
-         */
         async function handlePause() {
             if (currentTimerState.status !== 'RUNNING') return;
-
             const remainingSeconds = calculateRemainingTime();
 
             await setTimerState({
@@ -365,24 +323,16 @@
             });
         }
 
-        /**
-         * 타이머 재설정 처리
-         */
         async function handleReset() {
-            // FINISHED 상태나 PAUSED/RUNNING 상태에서 재설정
             if (currentTimerState.status === 'STOPPED') return;
 
             await setTimerState({
                 status: 'STOPPED',
-                // 재설정 시 마지막으로 설정된 총 시간으로 돌아감
                 pausedTimeRemainingSeconds: currentTimerState.totalDurationSeconds,
                 startTimeMs: 0
             });
         }
 
-        /**
-         * 사용자 입력 값으로 타이머 시간을 설정합니다.
-         */
         async function handleSetTime() {
             if (currentTimerState.status !== 'STOPPED' && currentTimerState.status !== 'FINISHED') return;
 
@@ -395,67 +345,65 @@
                 return;
             }
 
-            // Firestore에 새로운 총 시간과 정지된 시간 업데이트
             await setTimerState({
                 totalDurationSeconds: newDuration,
                 pausedTimeRemainingSeconds: newDuration,
-                status: 'STOPPED', // 설정을 바꾸면 무조건 STOPPED 상태로
+                status: 'STOPPED',
                 startTimeMs: 0
             });
 
-            // UI 업데이트
             updateDisplay(newDuration);
             updateButtonStates();
         }
 
         // =======================================================================
-        // 5. Firebase 초기화
+        // 5. Firebase 초기화 안전 제어
         // =======================================================================
         
         async function setupFirebase() {
+            // 주입된 설정 정보에 핵심 값이 없으면 바로 로컬 모드로 작동시킴
+            if (!firebaseConfig || !firebaseConfig.projectId) {
+                console.log("Firebase 키가 제공되지 않았습니다. 일반 로컬 타이머 모드로 전환합니다.");
+                userIdDisplay.textContent = "모드: 로컬 타이머 (단독 실행)";
+                updateButtonStates();
+                tick();
+                return;
+            }
+
             try {
-                // Firebase App 초기화
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
                 
-                // Firestore 디버그 로깅 활성화
-                setLogLevel('Debug');
-
-                // 인증 상태 설정
+                setLogLevel('Error'); // 디버그 에러 로그 최소화
                 await setPersistence(auth, browserLocalPersistence);
 
-                // 초기 인증 처리 (Custom Token 또는 익명 로그인)
                 if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
                 } else {
                     await signInAnonymously(auth);
                 }
 
-                // 인증 상태 변경 리스너
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
                         userId = user.uid;
                         userIdDisplay.textContent = `사용자 ID (공유용): ${userId}`;
                         isAuthReady = true;
-                        // 인증 완료 후 Firestore 실시간 동기화 시작
                         syncTimerState();
                     } else {
-                        // 사용자가 로그아웃했거나 인증되지 않음
-                        userId = null;
-                        isAuthReady = false;
-                        userIdDisplay.textContent = '사용자 ID: 인증 오류';
-                        loadingIndicator.style.display = 'none';
-                        errorMessage.textContent = '인증에 실패했습니다. 새로고침 해주세요.';
-                        errorMessage.style.display = 'block';
+                        userIdDisplay.textContent = '모드: 로컬 타이머';
+                        updateButtonStates();
+                        tick();
                     }
                 });
                 
             } catch (error) {
-                console.error("Firebase 초기화 중 오류 발생:", error);
-                errorMessage.textContent = `초기화 오류: ${error.message}`;
-                errorMessage.style.display = 'block';
-                loadingIndicator.style.display = 'none';
+                console.warn("Firebase 연결 실패, 로컬 타이머로 전환 완료.");
+                userIdDisplay.textContent = "모드: 로컬 타이머";
+                db = null;
+                auth = null;
+                updateButtonStates();
+                tick();
             }
         }
 
@@ -468,7 +416,6 @@
         resetButton.addEventListener('click', handleReset);
         setButton.addEventListener('click', handleSetTime);
 
-        // 앱 로드 시 Firebase 설정 시작
         window.onload = setupFirebase;
     </script>
 </body>
